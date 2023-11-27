@@ -10,12 +10,12 @@ import {ILendingPool} from "./interfaces/ILendingPool.sol";
 contract Treasury is Ownable2Step {
     using SafeERC20 for IERC20;
 
-    IUniswapV2Router01 private _uniswapRouter;
-    ILendingPool private _aaveLendingPool;
+    IUniswapV2Router01 private immutable _uniswapRouter;
+    ILendingPool private immutable _aaveLendingPool;
 
-    address private _usdcToken;
-    address private _usdtToken;
-    address private _daiToken;
+    address private immutable _usdcToken;
+    address private immutable _usdtToken;
+    address private immutable _daiToken;
 
     uint256 private _uniswapRatio;
     uint256 private _aaveRatio;
@@ -38,7 +38,7 @@ contract Treasury is Ownable2Step {
     }
 
     function _setRatios(uint256 uniswapRatio_, uint256 aaveRatio_) private {
-        if (_uniswapRatio + _aaveRatio != 100) revert();
+        if (_uniswapRatio + _aaveRatio > 100) revert();
 
         _uniswapRatio = uniswapRatio_;
         _aaveRatio = aaveRatio_;
@@ -46,6 +46,35 @@ contract Treasury is Ownable2Step {
 
     function setRatios(uint256 uniswapRatio_, uint256 aaveRatio_) external onlyOwner {
         _setRatios(uniswapRatio_, aaveRatio_);
+    }
+
+    function deposit(uint256 amount) external {
+        IERC20(_usdcToken).safeTransferFrom(_msgSender(), address(this), amount);
+
+        uint256 uniswapAmount = (amount * _uniswapRatio) / 100;
+        uint256 aaveAmount = (amount * _aaveRatio) / 100;
+
+        IERC20(_usdcToken).safeIncreaseAllowance(address(_uniswapRouter), uniswapAmount);
+        IERC20(_usdcToken).safeIncreaseAllowance(address(_aaveLendingPool), aaveAmount);
+
+        address[] memory path = new address[](2);
+        path[0] = _usdcToken;
+        path[1] = _usdtToken;
+
+        _uniswapRouter.swapExactTokensForTokens(uniswapAmount, 0, path, address(this), block.timestamp + 10 minutes);
+        _aaveLendingPool.deposit(_usdcToken, aaveAmount, address(this), 0);
+    }
+
+    function withdraw(uint256 amount) external onlyOwner {
+        IERC20(_usdtToken).safeTransfer(_msgSender(), (amount * _uniswapRatio) / 100);
+        IERC20(_daiToken).safeTransfer(_msgSender(), (amount * _aaveRatio) / 100);
+    }
+
+    function calculateYield() public view returns (uint256) {
+        uint256 usdtBalance = IERC20(_usdtToken).balanceOf(address(this));
+        uint256 daiBalance = IERC20(_daiToken).balanceOf(address(this));
+
+        return usdtBalance + daiBalance;
     }
 
     function uniswapRouter() external view returns (IUniswapV2Router01) {
